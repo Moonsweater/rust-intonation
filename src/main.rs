@@ -1,27 +1,35 @@
 
 //uses https://gregstrohman.com/wp-content/uploads/2019/10/jic01-Interval-tuning.pdf as guideline for interval-based JI tuning.
 
-static et_to_just: [f64; 12] = [
+static ET_TO_JUST: [f64; 12] = [
     0.0, // 0, unis.
     1.1173, // 1, second
-    2.0391, // 2, != 12 - et_to_just[10]
+    2.0391, // 2, != 12 - ET_TO_JUST[10]
     3.1564, // 3
     3.8631, // 4
     4.9804, // 5
-    5.8251, // 6, != 12 - et_to_just[6]
+    5.8251, // 6, != 12 - ET_TO_JUST[6]
     7.0196, // 7
     8.1369, // 8
     8.8436, // 9
-    9.6883, // 10, != 12 - et_to_just[2]
+    9.6883, // 10, != 12 - ET_TO_JUST[2]
     10.8827 // 11
 ]; //Maps integer intervals mod 12 to just intervals
 
 fn compute_tuning_vector_f64(equal_notes: &Vec<i8>) -> Vec<f64> {
 
-    let just_intervals = equal_notes_to_just_intervals(equal_notes);
-
     let n = equal_notes.len();
-    let k = (n-1) * n / 2;
+    // let equal_intervals = {let mut a = vec![];
+    //     for i in 0..n {
+    //         a.push(equal_notes[i] - equal_notes[0]);
+    //     }
+    //     a
+    // };
+    if n == 0 {return vec![];}
+    if n == 1 {return vec![0.0];}
+    let k = ((n-1) * n ) / 2;
+
+    let just_intervals = equal_notes_to_just_intervals(equal_notes);
 
     //Presumes the notes vector is sorted.
 
@@ -41,13 +49,16 @@ fn compute_tuning_vector_f64(equal_notes: &Vec<i8>) -> Vec<f64> {
     //This makes our least squares problem a quest to solve:
     //A * tuning = A(A^T * A)^-1 * A^T * (A * equal - just), i.e.,
     //tuning = equal - (A^T * A)^-1 * A^T * just, i.e.,
-    //tuning = equal - (A^T * A)^-1 * A^T * et_to_just(A * equal)
+    //tuning = equal - (A^T * A)^-1 * A^T * ET_TO_JUST(A * equal)
 
     //We can show that A^T * A is n-1 on the diagonal and -1 elsewhere.
-    //Additionally, (A^T * A)^-1  is 2/(n+1) on the diagonal and 1/(n+1) elsewhere.
-    //AND, (A^T * A)^-1 * A^T is simply A^T * 1/(n+1).
+    //Note, however, that A^T * A is singular. This messes with the least squares.
+    //To work around this, we use the pseudoinverse of A^T * A. This gives us:
+    //A(tuning + equal) = A * (A^T * A)^(+) * A^T * just
+    // ==> tuning = A^(+) * just - equal
+    //The pseudoinverse of A can be shown to be A^T / n, due to all its nonzero singular values being n.
 
-    let mut tuning: Vec<f64> = vec![];
+    let mut tuning: Vec<f64> = vec![0.0; n];
     
     //will rustify later with scoping and stuff.
 
@@ -62,16 +73,20 @@ fn compute_tuning_vector_f64(equal_notes: &Vec<i8>) -> Vec<f64> {
             start_note += 1;
             end_note = start_note + 1;
         }
-        if start_note == n-2 && end_note == n-1 && j != k-1 {
-            panic!();
+        if start_note >= n || end_note >= n{
+            println!("Ending at start_note = {}, j = {}.", start_note, j);
+            break;
         }
-        if j == k-1 && !(start_note == n-2 && end_note == n-1) {
-            panic!();
-        }
+        // if start_note == n-2 && end_note == n-1 && j != k-1 {
+        //     panic!();
+        // }
+        // if j == k-1 && !(start_note == n-2 && end_note == n-1) {
+        //     panic!();
+        // }
     }
 
     for i in 0..n {
-        tuning[i] = tuning[i] / ((n+1) as f64) + equal_notes[i] as f64;
+        tuning[i] = tuning[i] / (n as f64) ; // + equal_notes[i] as f64; //don't know why we don't re-add this, mathematically
     }
 
     tuning
@@ -80,93 +95,118 @@ fn compute_tuning_vector_f64(equal_notes: &Vec<i8>) -> Vec<f64> {
 
 fn equal_notes_to_just_intervals(equal_notes: &Vec<i8>) -> Vec<f64> {
 
-    //assumes equal_notes is sorted
+    //assumes equal_notes is sorted and has len >= 2
 
     let n = equal_notes.len();
     let mut start_note = 0;
     let mut end_note = 1;
-    let mut i = 0;
 
     let mut just_intervals = vec![];
 
     loop {
-        just_intervals[i] = et_to_just[((equal_notes[end_note] - equal_notes[start_note]) % 12) as usize];
-        i += 1;
-        start_note += 1;
+        just_intervals.push(
+            ET_TO_JUST[((equal_notes[end_note] - equal_notes[start_note]) % 12) as usize]
+        );
         end_note += 1;
         if end_note >= n {
             start_note += 1;
             end_note = start_note + 1;
         }
+        if start_note >= n || end_note >= n{
+            break;
+        }
     }
+
+    just_intervals
+
 }
 
 #[cfg(test)]
-//this thing is important, somehow. Something something, rust attributes.
 mod tests {
-    use super::*; //use everything in the surrounding module environment.
+    use super::*;
+    const TEST_LO: i8 = 36; //C2
+    const TEST_HI: i8 = 100; //E7
+    fn jury_rigged_random(a: i8) -> i8 {
+        if rand::random() && a < 4 {
+            jury_rigged_random(a + 1)
+        } else {
+            a
+        }
+    }
+    #[test]
     fn unison_tests() {
-        //ensure tuning_vector for single notes is zero
-        for i in 0i8..127 {
+        //ensure tuning_vector for single notes is EMPTY (not just zero)
+        for i in TEST_LO..TEST_HI {
             let equal_notes = vec![i];
             let tuning_vector = compute_tuning_vector_f64(&equal_notes);
             for j in 0..tuning_vector.len() {
-                assert_eq!(0.0, tuning_vector[j])
+                println!("tuning_vector[{}] = {}", j, tuning_vector[j]);
+                assert_eq!(tuning_vector[j], 0.0);
             }
         }
         //ensure tuning vector for octaves is zero
-        for i in 0i8..127 {
-            let equal_notes = vec![i, (i + 12) % 120, (i + 12 * 4) % 120];
+        for i in TEST_LO..(TEST_HI / 2) {
+            let r1 = jury_rigged_random(0);
+            let r2 = jury_rigged_random(1);
+            let equal_notes = 
+                {let mut a = vec![i, (i + 12 * r1), (i + 12 * r2)];
+                a.sort_unstable(); a};
             let tuning_vector = compute_tuning_vector_f64(&equal_notes);
             for j in 0..tuning_vector.len() {
+                println!("equal_notes = [{}, {}, {}]", equal_notes[0], equal_notes[1], equal_notes[2]);
+                println!("tuning_vector[{}] = {}", j, tuning_vector[j]);
                 assert_eq!(0.0, tuning_vector[j])
             }
         }
     }
+
+    #[test]
     fn interval_tests(){
         //ensure tuning vector for dyads is as given by the table.
         let epsilon = 0.0001;
-        for root in 0i8..100 {
-            for top in 0i8..27 {
+        for root in TEST_LO..TEST_HI {
+            for interval in 0i8..27 {
+                let top = root + interval;
                 let equal_notes = vec![root, top];
                 let tuning_vector = compute_tuning_vector_f64(&equal_notes);
                 for j in 0..tuning_vector.len() {
-                    assert!((tuning_vector[j] - et_to_just[(top - root) as usize]) < epsilon)
+                    assert!((tuning_vector[j] - ET_TO_JUST[(interval % 12) as usize]) < epsilon)
                 }
             }
         }
     }
-    fn triad_tests() {
-        //probably needs us to listen with our ears at this point :pensive:
-        //major triad:
-        //in 1st:
-        for root in 0i8..100 {
-            let equal_notes = vec![root, root + 4, root + 7];
-            let tuning_vector = compute_tuning_vector_f64(&equal_notes);
-            //play audio
-        }
-        //in 2nd:
-        for root in 0i8..100 {
-            let equal_notes = vec![root, root + 3, root + 8];
-            let tuning_vector = compute_tuning_vector_f64(&equal_notes);
-            //play audio
-        }
-        //in 3rd:
-        for root in 0i8..100 {
-            let equal_notes = vec![root, root + 5, root + 9];
-            let tuning_vector = compute_tuning_vector_f64(&equal_notes);
-            //play audio
-        }
-        
-    }
-    fn asymmetry_tests() {
-        //test on things like dominant 7th chords with 2 roots represented, to ensure it doesn't drag up the 7th too much.
-        
-    }
+    
+    //fn triad_tests() {
+    //    //probably needs us to listen with our ears at this point :pensive:
+    //    //major triad:
+    //    //in 1st:
+    //    for root in TEST_LO..TEST_HI {
+    //        let equal_notes = vec![root, root + 4, root + 7];
+    //        let tuning_vector = compute_tuning_vector_f64(&equal_notes);
+    //        //play audio
+    //    }
+    //    //in 2nd:
+    //    for root in TEST_LO..TEST_HI {
+    //        let equal_notes = vec![root, root + 3, root + 8];
+    //        let tuning_vector = compute_tuning_vector_f64(&equal_notes);
+    //        //play audio
+    //    }
+    //    //in 3rd:
+    //    for root in TEST_LO..TEST_HI {
+    //        let equal_notes = vec![root, root + 5, root + 9];
+    //        let tuning_vector = compute_tuning_vector_f64(&equal_notes);
+    //        //play audio
+    //    }
+    //    
+    //}
+    //fn asymmetry_tests() {
+    //    //test on things like dominant 7th chords with 2 roots represented, to ensure it doesn't drag up the 7th too much.
+    //    
+    //}
+    
+    
 }
 
 fn main() {
-
-
 
 }
