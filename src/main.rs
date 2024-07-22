@@ -36,7 +36,7 @@ fn compute_tuning_vector_f64(equal_notes: &Vec<i8>) -> Vec<f64> {
     // Least squares: choose tuning vector that minimizes
     // ||A * (tuning + equal) - just||^2,
     // Where A takes a vector of pitches to a vector holding
-    // the interval from pitch 1 to 2, then 1 to 3, ... then 2 to 3, ... then n to n.
+    // the interval from pitch 1 to 2, then 1 to 3, ... then 2 to 3, ... then n-1 to n.
     // that is, A equals:
     // [-1 1 0 0 ... 0]
     // [-1 0 1 0 ... 0]
@@ -57,6 +57,10 @@ fn compute_tuning_vector_f64(equal_notes: &Vec<i8>) -> Vec<f64> {
     //A(tuning + equal) = A * (A^T * A)^(+) * A^T * just
     // ==> tuning = A^(+) * just - equal
     //The pseudoinverse of A can be shown to be A^T / n, due to all its nonzero singular values being n.
+
+    //Since the nullspace of A^T * A is span([1; 1; ... 1]), the best answer will be A^(T) * just - equal, plus some scalar multiple of [1; 1; ... 1].
+    //We choose a linear shift that makes the bass note perfectly in tune with equal temperment.
+    //(More sophisticated implementations would identify the *root*, and make *that* in tune.)
 
     let mut tuning: Vec<f64> = vec![0.0; n];
     
@@ -86,7 +90,12 @@ fn compute_tuning_vector_f64(equal_notes: &Vec<i8>) -> Vec<f64> {
     }
 
     for i in 0..n {
-        tuning[i] = tuning[i] / (n as f64) ; // + equal_notes[i] as f64; //don't know why we don't re-add this, mathematically
+        tuning[i] = (tuning[i] / (n as f64)) - equal_notes[i] as f64;
+    }
+    //linear offset by multiple of [1; ... 1], so that tuning[0] = 0.
+    let offset = tuning[0];
+    for i in 0..n {
+        tuning[i] -= offset;
     }
 
     tuning
@@ -105,8 +114,16 @@ fn equal_notes_to_just_intervals(equal_notes: &Vec<i8>) -> Vec<f64> {
 
     loop {
         just_intervals.push(
-            ET_TO_JUST[((equal_notes[end_note] - equal_notes[start_note]) % 12) as usize]
+            {let interval = 
+            {let octaves = (((equal_notes[end_note] - equal_notes[start_note]) / 12) * 12) as f64;
+            println!("{} octaves", octaves / 12.0);
+            octaves}
+            + ET_TO_JUST[((equal_notes[end_note] - equal_notes[start_note]) % 12) as usize];
+            println!("interval equals {}", interval);
+            interval
+            }
         );
+        
         end_note += 1;
         if end_note >= n {
             start_note += 1;
@@ -136,15 +153,17 @@ mod tests {
     #[test]
     fn unison_tests() {
         //ensure tuning_vector for single notes is EMPTY (not just zero)
+        println!("Unison:");
         for i in TEST_LO..TEST_HI {
             let equal_notes = vec![i];
             let tuning_vector = compute_tuning_vector_f64(&equal_notes);
             for j in 0..tuning_vector.len() {
                 println!("tuning_vector[{}] = {}", j, tuning_vector[j]);
-                assert_eq!(tuning_vector[j], 0.0);
+                assert_eq!(0.0, tuning_vector[j]);
             }
         }
         //ensure tuning vector for octaves is zero
+        println!("Octaves:");
         for i in TEST_LO..(TEST_HI / 2) {
             let r1 = jury_rigged_random(0);
             let r2 = jury_rigged_random(1);
@@ -154,7 +173,7 @@ mod tests {
             let tuning_vector = compute_tuning_vector_f64(&equal_notes);
             for j in 0..tuning_vector.len() {
                 println!("equal_notes = [{}, {}, {}]", equal_notes[0], equal_notes[1], equal_notes[2]);
-                println!("tuning_vector[{}] = {}", j, tuning_vector[j]);
+                println!("tuning_vector = [{}, {}, {}]", tuning_vector[0], tuning_vector[1], tuning_vector[2]);
                 assert_eq!(0.0, tuning_vector[j])
             }
         }
@@ -163,6 +182,7 @@ mod tests {
     #[test]
     fn interval_tests(){
         //ensure tuning vector for dyads is as given by the table.
+        println!("Intervals:");
         let epsilon = 0.0001;
         for root in TEST_LO..TEST_HI {
             for interval in 0i8..27 {
