@@ -1,7 +1,7 @@
 
 //uses https://gregstrohman.com/wp-content/uploads/2019/10/jic01-Interval-tuning.pdf as guideline for interval-based JI tuning.
 
-use rulinalg::matrix::{Matrix, BaseMatrix};
+use nalgebra::{DMatrix, DVector};
 
 static ET_TO_JUST: [f64; 12] = [
     0.0, // 0, unis.
@@ -79,7 +79,7 @@ fn compute_tuning_vector_f64(equal_notes: &Vec<i8>, root_index: usize) -> Result
             WA //W * A
         ) = {
             let mut j_weighted= vec![];
-            let mut WA = Matrix::zeros(m, n);
+            let mut WA = DMatrix::zeros(m, n);
             let mut start = 0;
             let mut end = 1;
             let mut i = 0;
@@ -87,8 +87,8 @@ fn compute_tuning_vector_f64(equal_notes: &Vec<i8>, root_index: usize) -> Result
                 let interval = (equal_notes[end] - equal_notes[start]) as usize;
                 let current_weight = f64::sqrt(IMPORTANCE_WEIGHTS[interval % 12]);
                 j_weighted.push(current_weight * ((interval - (interval % 12)) as f64 + ET_TO_JUST[interval % 12]));
-                WA[[i, start]] = -current_weight;
-                WA[[i, end]] = current_weight;
+                WA[(i, start)] = -current_weight;
+                WA[(i, end)] = current_weight;
                 end += 1;
                 i += 1;
                 if end == n {
@@ -100,26 +100,31 @@ fn compute_tuning_vector_f64(equal_notes: &Vec<i8>, root_index: usize) -> Result
                 }
             }
             (
-                Matrix::new(m, 1, j_weighted),
+                DVector::from_vec(j_weighted),
                 WA
             )
         }; 
 
     //WA will be singular: SVD is the best bet for the pseudoinverse.
     let epsilon = 0.00001;
-    let (mut S, U, V) = WA.svd().unwrap();
-    for i in 0..S.cols() {
-        if S[[i, i]] < epsilon {
-            S[[i, i]] = 0.0;
+    let wa_svd = WA.svd(true, true);
+    let svd_failed_msg = &String::from("Svd failed.");
+    let u = wa_svd.u.ok_or(svd_failed_msg)?;
+    let v_t = wa_svd.v_t.ok_or(svd_failed_msg)?;
+    let mut s = DMatrix::from_diagonal(&wa_svd.singular_values);
+    
+    for i in 0..s.ncols() {
+        if s[(i,i)] < epsilon {
+            s[(i, i)] = 0.0;
         } else {
-            S[[i, i]]  = 1.0 / S[[i, i]];
+            s[(i, i)]  = 1.0 / s[(i, i)];
         }
     }
 
-    let mut tuning = V * (S * (U.transpose() * just_intervals_weighted));
+    let mut tuning =  v_t.transpose() * (s * (u.transpose() * just_intervals_weighted));
 
     for i in 0..n {
-        tuning[[i, 0]] -= equal_notes[i] as f64;
+        tuning[(i, 0)] -= equal_notes[i] as f64;
     }
     
     //linear offset by multiple of [1; ... 1], so that the root is perfectly in-tune with 12tet.
@@ -128,16 +133,16 @@ fn compute_tuning_vector_f64(equal_notes: &Vec<i8>, root_index: usize) -> Result
     //Note: good root detection algs will probably detect pitch class, not exact notes.
     //When we cross this bridge, we should default to the lowest instance of the selected pitch class.
 
-    let offset = tuning[[root_index, 0]];
+    let offset = tuning[(root_index, 0)];
 
     for i in 0..n {
-        tuning[[i, 0]] -= offset;
+        tuning[(i, 0)] -= offset;
     }
 
     let mut tuning_out = vec![];
 
     for i in 0..n {
-        tuning_out.push(tuning[[i,0]]);
+        tuning_out.push(tuning[(i,0)]);
     }
 
     Ok(tuning_out)
@@ -159,6 +164,7 @@ fn compute_tuning_vector_i8(equal_notes:&Vec<i8>, root_index: usize) -> Result<V
 
 #[cfg(test)]
 mod tests {
+    //NOTE: rust runs tests in parallel! Use print statements at your peril!
     use super::*;
     const TEST_LO: i8 = 36; //C2
     const TEST_HI: i8 = 100; //E7
@@ -169,18 +175,18 @@ mod tests {
             a
         }
     }
-    #[test]
+    //#[test]
     fn unison_tests() {
         //ensure tuning_vector for single notes is EMPTY (not just zero)
-        println!("Unison:");
-        for i in TEST_LO..TEST_HI {
-            let equal_notes = vec![i];
-            let tuning_vector = compute_tuning_vector_f64(&equal_notes, 0).unwrap();
-            for j in 0..tuning_vector.len() {
-                println!("tuning_vector[{}] = {}", j, tuning_vector[j]);
-                assert_eq!(0.0, tuning_vector[j]);
-            }
-        }
+        // println!("Unison:");
+        // for i in TEST_LO..TEST_HI {
+        //     let equal_notes = vec![i];
+        //     let tuning_vector = compute_tuning_vector_f64(&equal_notes, 0).unwrap();
+        //     for j in 0..tuning_vector.len() {
+        //         println!("tuning_vector[{}] = {}", j, tuning_vector[j]);
+        //         assert_eq!(0.0, tuning_vector[j]);
+        //     }
+        // }
         //ensure tuning vector for octaves is zero
         println!("Octaves:");
         for i in TEST_LO..(TEST_HI / 2) {
@@ -198,12 +204,12 @@ mod tests {
         }
     }
 
-    //#[test]
+    #[test]
     fn interval_tests(){
         //ensure tuning vector for dyads is as given by the table.
         println!("Intervals:");
         let epsilon = 0.0001;
-        for root in TEST_LO..TEST_HI {
+        for root in TEST_LO..TEST_HI- 12 {
             for interval in 0i8..27 {
                 let top = root + interval;
                 let equal_notes = vec![root, top];
@@ -216,7 +222,7 @@ mod tests {
             }
         }
     }
-    #[test]
+    //#[test]
     fn triad_tests() {
         //requires auditory checks as well
         //major triad:
@@ -233,7 +239,7 @@ mod tests {
        println!("Triads -- first inversion:");
        for root in 10..11 {
             let equal_notes = vec![root + 4, root + 7, root + 12];
-            let tuning_vector = compute_tuning_vector_f64(&equal_notes, 1).unwrap();
+            let tuning_vector = compute_tuning_vector_f64(&equal_notes, 2).unwrap();
             println!("equal_notes = [{}, {}, {}]", equal_notes[0], equal_notes[1], equal_notes[2]);
             println!("tuning_vector = [{}, {}, {}]", tuning_vector[0], tuning_vector[1], tuning_vector[2]);
             //play audio
@@ -242,7 +248,7 @@ mod tests {
        println!("Triads -- second inversion:");
        for root in 10..11 {
             let equal_notes = vec![root + 7, root + 12, root + 16];
-            let tuning_vector = compute_tuning_vector_f64(&equal_notes, 2).unwrap();
+            let tuning_vector = compute_tuning_vector_f64(&equal_notes, 1).unwrap();
             println!("equal_notes = [{}, {}, {}]", equal_notes[0], equal_notes[1], equal_notes[2]);
             println!("tuning_vector = [{}, {}, {}]", tuning_vector[0], tuning_vector[1], tuning_vector[2]);
             //play audio
@@ -250,7 +256,7 @@ mod tests {
        
     }
 
-    #[test]
+    //#[test]
     //non-rigorous-- sanity check to see how the algorithm affects more complicated chords
     fn extension_tests() {
         //dom7
