@@ -2,6 +2,7 @@
 //uses https://gregstrohman.com/wp-content/uploads/2019/10/jic01-Interval-tuning.pdf as guideline for interval-based JI tuning.
 
 use nalgebra::{DMatrix, DVector};
+use midly::Smf;
 
 static ET_TO_JUST: [f64; 12] = [
     0.0, // 0, unis.
@@ -314,9 +315,38 @@ mod tests {
     
 }
 
-
-
 fn main() {
+
+    use std::env;
+    use std::fs;
+
+    let args:Vec<String> = env::args().collect();
+
+    let (midi_bytes, midi_names) = {
+        let mut out = vec![];
+        let mut names = vec![];
+        for arg in 1..args.len() {
+            if let Ok(next) = fs::read(&args[arg]) {
+                out.push(next);
+                names.push(&args[arg]);
+            } else {
+                panic!("Failed to read file \'{}\'.", &args[arg]);
+            }
+        }
+        (out, names)
+    };
+
+    let Smf_files = {
+        let mut out = vec![];
+        for i in 0..midi_bytes.len() {
+            if let Ok(next) = Smf::parse(&midi_bytes[i]) {
+                out.push(next);
+            } else  {
+                panic!("Failed to parse file \'{}\' as midi.", midi_names[i]);
+            }
+        }
+        out
+    };
 
     //midly is the rust midi parser/writer you want to use!!
 
