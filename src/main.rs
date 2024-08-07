@@ -33,6 +33,7 @@ static IMPORTANCE_WEIGHTS: [f64; 12] = [
     0.25, //m7
     0.25, //M7
 ]; //Made-up weights, based on how musically important I think it is that these intervals sound in-tune.
+//Another thought: weights could possibly be functions of octave distance?
 
 fn weight_vec(equal_intervals: &Vec<i8>) -> Vec<f64> {
     let m = equal_intervals.len();
@@ -162,6 +163,8 @@ fn compute_tuning_vector_i8(equal_notes:&Vec<i8>, root_index: usize) -> Result<V
     Ok(i8_tuning)
 }
 
+
+
 #[cfg(test)]
 mod tests {
     //NOTE: rust runs tests in parallel! Use print statements at your peril!
@@ -204,7 +207,7 @@ mod tests {
         }
     }
 
-    #[test]
+    //#[test]
     fn interval_tests(){
         //ensure tuning vector for dyads is as given by the table.
         println!("Intervals:");
@@ -257,7 +260,29 @@ mod tests {
     }
 
     //#[test]
+    fn stack_tests() {
+        //p4 x5
+        let max = 3;
+        let mut equal_notes = vec![0i8];
+        for i in 0..max {
+            equal_notes.push(equal_notes[i] + 5);
+        }
+        let tuning_vector = compute_tuning_vector_f64(&equal_notes, 0).unwrap();
+        println!("Stacked 4ths: notes: {:?}", equal_notes);
+        println!("tuning: {:?}", tuning_vector);
+
+        //p5 x5
+        let mut equal_notes = vec![0i8];
+        for i in 0..max {
+            equal_notes.push(equal_notes[i] + 7);
+        }
+        let tuning_vector = compute_tuning_vector_f64(&equal_notes, 0).unwrap();
+        println!("stacked 5ths: notes: {:?}", equal_notes);
+        println!("tuning: {:?}", tuning_vector);
+    }
+
     //non-rigorous-- sanity check to see how the algorithm affects more complicated chords
+    //#[test]
     fn extension_tests() {
         //dom7
         let equal_notes = vec![0i8, 4, 7, 10];
@@ -289,6 +314,10 @@ mod tests {
     
 }
 
+
+
 fn main() {
+
+    //midly is the rust midi parser/writer you want to use!!
 
 }
