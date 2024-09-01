@@ -1,6 +1,10 @@
 
 //uses https://gregstrohman.com/wp-content/uploads/2019/10/jic01-Interval-tuning.pdf as guideline for interval-based JI tuning.
 
+//TODO: after getting REALLY SIMPLE midi export going for test purposes,
+//make sure this tool interfaces well with the leading JUCE alternative in the ecosystem
+//(that is, nih-plug). In particular, it should remain as agnostic as possible WRT data types, etc.
+
 use nalgebra::{DMatrix, DVector};
 use midly::Smf;
 
@@ -45,7 +49,7 @@ fn weight_vec(equal_intervals: &Vec<i8>) -> Vec<f64> {
     out   
 }
 
-fn compute_tuning_vector_f64(equal_notes: &Vec<i8>, root_index: usize) -> Result<Vec<f64>, String> {
+fn compute_tuning_vector_f64(equal_notes: &Vec<i8>) -> Result<Vec<f64>, String> {
 
     //Presumes the notes vector is sorted.
 
@@ -68,8 +72,12 @@ fn compute_tuning_vector_f64(equal_notes: &Vec<i8>, root_index: usize) -> Result
 
     //Since the nullspace of A^T * A is span([1; 1; ... 1]), the best answer
     //will be that given by the above, plus some scalar multiple of [1; 1; ... 1].
-    //We choose a linear shift that makes the bass note perfectly in tune with equal temperment.
-    //(More sophisticated implementations would identify the *root*, and tune to *that*.)
+
+    //Instead of the theoretically perfect solution (identifying the root somehow, and tuning the root to its 12tet pitch),
+    //we instead choose the linear shift that involves the smallest mean square deviation from equal temperment across all notes.
+    //so, choose a to minimize ||equal + (tuning + a * 1_vec) - equal||^2,
+    //i.e., minimize ||1_vec * a + tuning||^2
+    //This turns out to be equivalent to mean-centering tuning.
 
     let n = equal_notes.len();
     if n == 0 {return Ok(vec![]);}
@@ -125,20 +133,16 @@ fn compute_tuning_vector_f64(equal_notes: &Vec<i8>, root_index: usize) -> Result
 
     let mut tuning =  v_t.transpose() * (s * (u.transpose() * just_intervals_weighted));
 
+    let mut tuning_sum = 0.0;
     for i in 0..n {
         tuning[(i, 0)] -= equal_notes[i] as f64;
+        tuning_sum += tuning[(i,0)];
     }
-    
-    //linear offset by multiple of [1; ... 1], so that the root is perfectly in-tune with 12tet.
-    
-    //We choose the root instead of the bass note to ensure good inversions.
-    //Note: good root detection algs will probably detect pitch class, not exact notes.
-    //When we cross this bridge, we should default to the lowest instance of the selected pitch class.
 
-    let offset = tuning[(root_index, 0)];
+    let tuning_mean = tuning_sum / (n as f64);
 
     for i in 0..n {
-        tuning[(i, 0)] -= offset;
+        tuning[(i,0)] -= tuning_mean;
     }
 
     let mut tuning_out = vec![];
@@ -151,20 +155,7 @@ fn compute_tuning_vector_f64(equal_notes: &Vec<i8>, root_index: usize) -> Result
 
 }
 
-fn compute_tuning_vector_i8(equal_notes:&Vec<i8>, root_index: usize) -> Result<Vec<i8>, String> {
-    let f64_tuning = compute_tuning_vector_f64(equal_notes, root_index)?;
-    let mut i8_tuning = vec![];
-    for i in 0..f64_tuning.len() {
-        if f64::abs(f64_tuning[i]) > 1.0 {
-            return Err(String::from("Tuning vector exceeds a full semitone at i = {}."));
-            //No formatting strings for String::from? Look up once you get wifi back.
-        } 
-        i8_tuning.push(f64::round(f64_tuning[i] * 128.0) as i8);
-    }
-    Ok(i8_tuning)
-}
-
-
+//Note: Midly has a function to convert floats to pitchbends (which are 14-bit ints???)
 
 #[cfg(test)]
 mod tests {
@@ -172,6 +163,7 @@ mod tests {
     use super::*;
     const TEST_LO: i8 = 36; //C2
     const TEST_HI: i8 = 100; //E7
+    const EPSILON: f64 = 0.0001;
     fn jury_rigged_random(a: i8) -> i8 {
         if rand::random() && a < 4 {
             jury_rigged_random(a + 1)
@@ -199,11 +191,11 @@ mod tests {
             let equal_notes = 
                 {let mut a = vec![i, (i + 12 * r1), (i + 12 * r2)];
                 a.sort_unstable(); a};
-            let tuning_vector = compute_tuning_vector_i8(&equal_notes, 2).unwrap();
+            let tuning_vector = compute_tuning_vector_f64(&equal_notes).unwrap();
             println!("equal_notes = [{}, {}, {}]", equal_notes[0], equal_notes[1], equal_notes[2]);
             println!("tuning_vector = [{}, {}, {}]", tuning_vector[0], tuning_vector[1], tuning_vector[2]);    
             for j in 0..tuning_vector.len() {
-                assert_eq!(0, tuning_vector[j])
+                assert!(tuning_vector[j]- 0.0 < EPSILON);
             }
         }
     }
@@ -212,21 +204,20 @@ mod tests {
     fn interval_tests(){
         //ensure tuning vector for dyads is as given by the table.
         println!("Intervals:");
-        let epsilon = 0.0001;
         for root in TEST_LO..TEST_HI- 12 {
             for interval in 0i8..27 {
                 let top = root + interval;
                 let equal_notes = vec![root, top];
-                let tuning_vector = compute_tuning_vector_f64(&equal_notes, 0).unwrap();
+                let tuning_vector = compute_tuning_vector_f64(&equal_notes).unwrap();
                 for j in 0..tuning_vector.len() {
-                    assert!((tuning_vector[j] - ET_TO_JUST[(interval % 12) as usize]) < epsilon)
+                    assert!((tuning_vector[j] - ET_TO_JUST[(interval % 12) as usize]) < EPSILON)
                 }
                 println!("equal_notes = [{}, {}]", equal_notes[0], equal_notes[1]);
                 println!("tuning_vector = [{}, {}]", tuning_vector[0], tuning_vector[1]);
             }
         }
     }
-    //#[test]
+    #[test]
     fn triad_tests() {
         //requires auditory checks as well
         //major triad:
@@ -234,7 +225,7 @@ mod tests {
        println!("Triads -- root posision:");
        for root in 10..11 {
             let equal_notes = vec![root, root + 4, root + 7];
-            let tuning_vector = compute_tuning_vector_f64(&equal_notes, 0).unwrap();
+            let tuning_vector = compute_tuning_vector_f64(&equal_notes).unwrap();
             println!("equal_notes = [{}, {}, {}]", equal_notes[0], equal_notes[1], equal_notes[2]);
             println!("tuning_vector = [{}, {}, {}]", tuning_vector[0], tuning_vector[1], tuning_vector[2]);
             //play audio
@@ -243,7 +234,7 @@ mod tests {
        println!("Triads -- first inversion:");
        for root in 10..11 {
             let equal_notes = vec![root + 4, root + 7, root + 12];
-            let tuning_vector = compute_tuning_vector_f64(&equal_notes, 2).unwrap();
+            let tuning_vector = compute_tuning_vector_f64(&equal_notes).unwrap();
             println!("equal_notes = [{}, {}, {}]", equal_notes[0], equal_notes[1], equal_notes[2]);
             println!("tuning_vector = [{}, {}, {}]", tuning_vector[0], tuning_vector[1], tuning_vector[2]);
             //play audio
@@ -252,7 +243,7 @@ mod tests {
        println!("Triads -- second inversion:");
        for root in 10..11 {
             let equal_notes = vec![root + 7, root + 12, root + 16];
-            let tuning_vector = compute_tuning_vector_f64(&equal_notes, 1).unwrap();
+            let tuning_vector = compute_tuning_vector_f64(&equal_notes).unwrap();
             println!("equal_notes = [{}, {}, {}]", equal_notes[0], equal_notes[1], equal_notes[2]);
             println!("tuning_vector = [{}, {}, {}]", tuning_vector[0], tuning_vector[1], tuning_vector[2]);
             //play audio
@@ -268,7 +259,7 @@ mod tests {
         for i in 0..max {
             equal_notes.push(equal_notes[i] + 5);
         }
-        let tuning_vector = compute_tuning_vector_f64(&equal_notes, 0).unwrap();
+        let tuning_vector = compute_tuning_vector_f64(&equal_notes).unwrap();
         println!("Stacked 4ths: notes: {:?}", equal_notes);
         println!("tuning: {:?}", tuning_vector);
 
@@ -277,31 +268,31 @@ mod tests {
         for i in 0..max {
             equal_notes.push(equal_notes[i] + 7);
         }
-        let tuning_vector = compute_tuning_vector_f64(&equal_notes, 0).unwrap();
+        let tuning_vector = compute_tuning_vector_f64(&equal_notes).unwrap();
         println!("stacked 5ths: notes: {:?}", equal_notes);
         println!("tuning: {:?}", tuning_vector);
     }
 
     //non-rigorous-- sanity check to see how the algorithm affects more complicated chords
-    //#[test]
+    #[test]
     fn extension_tests() {
         //dom7
         let equal_notes = vec![0i8, 4, 7, 10];
-        let tuning_vector = compute_tuning_vector_f64(&equal_notes, 0).unwrap();
+        let tuning_vector = compute_tuning_vector_f64(&equal_notes).unwrap();
         println!("dominant 7: notes: {:?}", equal_notes);
         println!("tuning: {:?}", tuning_vector);
         //lowers the fifth by a ton: not ideal!
 
         //m9
         let equal_notes = vec![0i8, 7, 10, 14, 15];
-        let tuning_vector = compute_tuning_vector_f64(&equal_notes, 0).unwrap();
+        let tuning_vector = compute_tuning_vector_f64(&equal_notes).unwrap();
         println!("minor 9: notes: {:?}", equal_notes);
         println!("tuning: {:?}", tuning_vector);
         //seems normal
 
         //M7#11
         let equal_notes = vec![0i8, 7, 11, 16, 18];
-        let tuning_vector = compute_tuning_vector_f64(&equal_notes, 0).unwrap();
+        let tuning_vector = compute_tuning_vector_f64(&equal_notes).unwrap();
         println!("maj7#11: notes: {:?}", equal_notes);
         println!("tuning: {:?}", tuning_vector);
         //seems normal
