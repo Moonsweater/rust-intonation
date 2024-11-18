@@ -15,7 +15,8 @@ Let `equal` be a vector of pitches (e.g, C2, A3, F#6, etc.), represented as inte
     [0, -1, 0, 1, 0, ..., 0, 0]
     ...
     [0, 0, 0, 0, 0, ..., -1, 1]
-```.
+```
+.
 It can be shown that `(A * x) mod 12` will map a vector `x` of pitches to a vector of every interval class formed by pairs of pitches in `x`.
 
 We now seek to pick a vector of pitches `tuned` that minimizes the least-squares expression:
