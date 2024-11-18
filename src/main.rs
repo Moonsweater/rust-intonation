@@ -5,49 +5,60 @@
 //make sure this tool interfaces well with the leading JUCE alternative in the ecosystem
 //(that is, nih-plug). In particular, it should remain as agnostic as possible WRT data types, etc.
 
+use once_cell::sync::Lazy;
 use nalgebra::{DMatrix, DVector};
 use midly::Smf;
 
-static ET_TO_JUST: [f64; 12] = [
-    0.0, // 0, unis.
-    1.1173, // 1
-    2.0391, // 2, != 12 - ET_TO_JUST[10]
-    3.1564, // 3
-    3.8631, // 4
-    4.9804, // 5
-    5.8251, // 6, != 12 - ET_TO_JUST[6]
+static ET_TO_JUST: Lazy<[f64; 12]> = Lazy::new(|| {
+    let mut arr = [0.0; 12];
+    arr[0] = 0.0;
+    arr[1] = 1.1173; 
+    arr[2] = 2.0391; // != 12 - ET_TO_JUST[10]
+    arr[3] = 3.1564;
+    arr[4] = 3.8631;
+    arr[5] = 4.9804;
+    arr[6] = 5.8251; // != 12 - ET_TO_JUST[6]
     //Tritone is subject to empirical revision: might just want to be a perfect 6.0!
-    7.0196, // 7
-    8.1369, // 8
-    8.8436, // 9
-    9.6883, // 10, != 12 - ET_TO_JUST[2]
-    10.8827 // 11
-]; //Maps integer intervals mod 12 to just intervals
+    arr[7] = 7.0196;
+    arr[8] = 8.1369;
+    arr[9] = 8.8436;
+    arr[10] = 9.6883; // != 12 - ET_TO_JUST[2]
+    arr[11] = 10.8827;
+    arr
+}); //Maps integer intervals mod 12 to just intervals
 
-static IMPORTANCE_WEIGHTS: [f64; 12] = [
-    1.0, //unis
-    0.25, //m2
-    0.5, //M2
-    1.0, //m3
-    1.0, //M3
-    1.0, //p4
-    0.125, //tritone
-    1.0, //p5
-    1.0, //m6
-    1.0, //M6
-    0.25, //m7
-    0.25, //M7
-]; //Made-up weights, based on how musically important I think it is that these intervals sound in-tune.
-//Another thought: weights could possibly be functions of octave distance?
+// static IMPORTANCE_WEIGHTS: [f64; 12] = [
+//     1.0, //unis
+//     0.25, //m2
+//     0.5, //M2
+//     1.0, //m3
+//     1.0, //M3
+//     1.0, //p4
+//     0.125, //tritone
+//     1.0, //p5
+//     1.0, //m6
+//     1.0, //M6
+//     0.25, //m7
+//     0.25, //M7
+// ]; //Made-up weights, based on how musically important I think it is that these intervals sound in-tune.
+// //Another thought: weights could possibly be functions of octave distance?
 
-fn weight_vec(equal_intervals: &Vec<i8>) -> Vec<f64> {
-    let m = equal_intervals.len();
-    let mut out = vec![];
-    for i in 0..m {
-        out.push(IMPORTANCE_WEIGHTS[(equal_intervals[i] % 12) as usize]);
-    }
-    out   
-}
+static IMPORTANCE_WEIGHTS_SQRTED: Lazy<[f64; 12]> = Lazy::new(|| {
+    let mut arr = [0.0; 12];
+    arr[0] = f64::sqrt(1.0); //unis
+    arr[1] = f64::sqrt(0.25); //m2
+    arr[2] = f64::sqrt(0.5); //M2
+    arr[3] = f64::sqrt(1.0); //m3
+    arr[4] = f64::sqrt(1.0); //M3
+    arr[5] = f64::sqrt(1.0); //p4
+    arr[6] = f64::sqrt(0.125); //tritone
+    arr[7] = f64::sqrt(1.0); //p5
+    arr[8] = f64::sqrt(1.0); //m6
+    arr[9] = f64::sqrt(1.0); //M6
+    arr[10] = f64::sqrt(0.5); //m7
+    arr[11] = f64::sqrt(0.5); //M7
+    arr
+});
 
 fn compute_tuning_vector_f64(equal_notes: &Vec<i8>) -> Result<Vec<f64>, String> {
 
@@ -95,7 +106,7 @@ fn compute_tuning_vector_f64(equal_notes: &Vec<i8>) -> Result<Vec<f64>, String> 
             let mut i = 0;
             loop {
                 let interval = (equal_notes[end] - equal_notes[start]) as usize;
-                let current_weight = f64::sqrt(IMPORTANCE_WEIGHTS[interval % 12]);
+                let current_weight = IMPORTANCE_WEIGHTS_SQRTED[interval % 12];
                 j_weighted.push(current_weight * ((interval - (interval % 12)) as f64 + ET_TO_JUST[interval % 12]));
                 WA[(i, start)] = -current_weight;
                 WA[(i, end)] = current_weight;
