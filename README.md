@@ -5,7 +5,7 @@ In ensemble music, performers naturally adjust their pitch to achieve mathematic
 ## Formalism
 This project approaches the task at hand as an optimization problem, seeking to minimize the weighted L^2 distance between each interval formed by a collection of simultaneous pitches and their just intonation equivalents.
 
-Let `equal` be a vector of pitches (e.g, C2, A3, F#6, etc.), represented as integers, and sorted from lowest to highest. Let `A` be matrix. It can be shown that `A` is the matrix
+Let `equal` be a vector of pitches (e.g, C2, A3, F#6, etc.), represented as integers, and sorted from lowest to highest. Let `A` be the matrix
 
 ```
     [-1, 1, 0, 0, 0, ..., 0, 0]
