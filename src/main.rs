@@ -1,10 +1,6 @@
 
 //uses https://gregstrohman.com/wp-content/uploads/2019/10/jic01-Interval-tuning.pdf as guideline for interval-based JI tuning.
 
-//TODO: after getting REALLY SIMPLE midi export going for test purposes,
-//make sure this tool interfaces well with the leading JUCE alternative in the ecosystem
-//(that is, nih-plug). In particular, it should remain as agnostic as possible WRT data types, etc.
-
 use once_cell::sync::Lazy;
 use nalgebra::{DMatrix, DVector};
 
@@ -26,6 +22,9 @@ static ET_TO_JUST: Lazy<[f64; 12]> = Lazy::new(|| {
     arr
 }); //Maps integer intervals mod 12 to just intervals
 
+//Importance weights are never used without sqrting them first,
+//but we leave them in the form of a comment for reference.
+
 // static IMPORTANCE_WEIGHTS: [f64; 12] = [
 //     1.0, //unis
 //     0.25, //m2
@@ -41,6 +40,8 @@ static ET_TO_JUST: Lazy<[f64; 12]> = Lazy::new(|| {
 //     0.25, //M7
 // ]; //Made-up weights, based on how musically important I think it is that these intervals sound in-tune.
 // //Another thought: weights could possibly be functions of octave distance?
+
+//An interesting thought: in a real soft synth, we could easily make these weights user-specified!
 
 static IMPORTANCE_WEIGHTS_SQRTED: Lazy<[f64; 12]> = Lazy::new(|| {
     let mut arr = [0.0; 12];
@@ -125,14 +126,14 @@ fn compute_tuning_vector_f64(equal_notes: &Vec<i8>) -> Result<Vec<f64>, String> 
             )
         }; 
 
-    //WA will be singular: SVD is the best bet for the pseudoinverse.
-    let epsilon = 0.00001;
+    //WA will be singular: SVD is a safe bet for the pseudoinverse.
+
     let wa_svd = WA.svd(true, true);
     let svd_failed_msg = &String::from("Svd failed.");
     let u = wa_svd.u.ok_or(svd_failed_msg)?;
     let v_t = wa_svd.v_t.ok_or(svd_failed_msg)?;
     let mut s = DMatrix::from_diagonal(&wa_svd.singular_values);
-    
+    let epsilon = 0.000001;
     for i in 0..s.ncols() {
         if s[(i,i)] < epsilon {
             s[(i, i)] = 0.0;
@@ -167,13 +168,21 @@ fn compute_tuning_vector_f64(equal_notes: &Vec<i8>) -> Result<Vec<f64>, String> 
 
 //Note: Midly has a function to convert floats to pitchbends (which are 14-bit ints???)
 
+
+
 #[cfg(test)]
 mod tests {
-    //NOTE: rust runs tests in parallel! Use print statements at your peril!
+    // ===== NUMERICAL TESTS ====== 
     use super::*;
+    use String;
     const TEST_LO: i8 = 36; //C2
     const TEST_HI: i8 = 100; //E7
     const EPSILON: f64 = 0.0001;
+
+    fn within_epsilon_of(a: f64, b: f64) -> bool {
+        return (f64::abs(a - b) < EPSILON);
+    }
+
     fn jury_rigged_random(a: i8) -> i8 {
         if rand::random() && a < 4 {
             jury_rigged_random(a + 1)
@@ -181,20 +190,10 @@ mod tests {
             a
         }
     }
-    //#[test]
+
+    #[test]
     fn unison_tests() {
-        //ensure tuning_vector for single notes is EMPTY (not just zero)
-        // println!("Unison:");
-        // for i in TEST_LO..TEST_HI {
-        //     let equal_notes = vec![i];
-        //     let tuning_vector = compute_tuning_vector_f64(&equal_notes, 0).unwrap();
-        //     for j in 0..tuning_vector.len() {
-        //         println!("tuning_vector[{}] = {}", j, tuning_vector[j]);
-        //         assert_eq!(0.0, tuning_vector[j]);
-        //     }
-        // }
-        //ensure tuning vector for octaves is zero
-        println!("Octaves:");
+        //ensure tuning vector for octaves and unison is the zero vector
         for i in TEST_LO..(TEST_HI / 2) {
             let r1 = jury_rigged_random(0);
             let r2 = jury_rigged_random(1);
@@ -202,67 +201,168 @@ mod tests {
                 {let mut a = vec![i, (i + 12 * r1), (i + 12 * r2)];
                 a.sort_unstable(); a};
             let tuning_vector = compute_tuning_vector_f64(&equal_notes).unwrap();
-            println!("equal_notes = [{}, {}, {}]", equal_notes[0], equal_notes[1], equal_notes[2]);
-            println!("tuning_vector = [{}, {}, {}]", tuning_vector[0], tuning_vector[1], tuning_vector[2]);    
             for j in 0..tuning_vector.len() {
-                assert!(tuning_vector[j]- 0.0 < EPSILON);
+                assert!(tuning_vector[j] < EPSILON);
             }
         }
     }
 
-    //#[test]
+    #[test]
     fn interval_tests(){
-        //ensure tuning vector for dyads is as given by the table.
-        println!("Intervals:");
-        for root in TEST_LO..TEST_HI- 12 {
+        //ensure tuning vector for dyads is as given by the table,
+        //after accounting for the vertical shift.
+        //Also tests across multi-octave gaps.
+        let mut failures = String::new();
+        for root in TEST_LO..(TEST_HI - 12) {
             for interval in 0i8..27 {
                 let top = root + interval;
                 let equal_notes = vec![root, top];
                 let tuning_vector = compute_tuning_vector_f64(&equal_notes).unwrap();
-                for j in 0..tuning_vector.len() {
-                    assert!((tuning_vector[j] - ET_TO_JUST[(interval % 12) as usize]) < EPSILON)
+                let tuned_interval = (tuning_vector[1] + equal_notes[1] as f64) - (tuning_vector[0] + equal_notes[0] as f64);
+                let expected_interval = ET_TO_JUST[(interval % 12) as usize] + (12 * (interval / 12)) as f64;
+                if !within_epsilon_of(tuned_interval, expected_interval) {
+                    failures += (format!("tuned result is {}, but expected {}. \n",
+                    tuned_interval, expected_interval)).as_str();
                 }
-                println!("equal_notes = [{}, {}]", equal_notes[0], equal_notes[1]);
-                println!("tuning_vector = [{}, {}]", tuning_vector[0], tuning_vector[1]);
             }
         }
+        assert!(failures.is_empty(), "{failures}");
     }
+
     #[test]
     fn triad_tests() {
-        //requires auditory checks as well
-        //major triad:
-        //in root:
-       println!("Triads -- root posision:");
-       for root in 10..11 {
+        //In real-world performance, major triads are typically mapped such that the M3
+        //and the P5 are exactly as given by the tuning chart.
+        //In this test, we check if our algorithm replicates this behavior.
+        //That is, we check to see if our tuned vector is a vertical shift away from 
+        //a major triad tuned in this way.
+        //Root position:
+        let mut failures = String::new();
+        for root in 10..40 {
             let equal_notes = vec![root, root + 4, root + 7];
             let tuning_vector = compute_tuning_vector_f64(&equal_notes).unwrap();
-            println!("equal_notes = [{}, {}, {}]", equal_notes[0], equal_notes[1], equal_notes[2]);
-            println!("tuning_vector = [{}, {}, {}]", tuning_vector[0], tuning_vector[1], tuning_vector[2]);
-            //play audio
-       }
-       //in 1st:
-       println!("Triads -- first inversion:");
-       for root in 10..11 {
+            let just_notes = {
+                let mut out = vec![];
+                for i in 0..3 {
+                    out.push(equal_notes[i] as f64 + tuning_vector[i]);
+                }
+                out
+            };
+            if !within_epsilon_of(just_notes[1] - just_notes[0], ET_TO_JUST[4]) {
+                failures += format!("Root position triad failed to tune perfectly: third was {}, but expected {}", 
+                just_notes[1] - just_notes[0], ET_TO_JUST[4]).as_str();
+            }
+            if !within_epsilon_of(just_notes[2] - just_notes[0], ET_TO_JUST[7]) {
+                failures += format!("Root position triad failed to tune perfectly: fifth was {}, but expected {}", 
+                just_notes[1] - just_notes[0], ET_TO_JUST[4]).as_str();
+            }
+        }
+        //1st inversion:
+        for root in 10..40 {
             let equal_notes = vec![root + 4, root + 7, root + 12];
             let tuning_vector = compute_tuning_vector_f64(&equal_notes).unwrap();
-            println!("equal_notes = [{}, {}, {}]", equal_notes[0], equal_notes[1], equal_notes[2]);
-            println!("tuning_vector = [{}, {}, {}]", tuning_vector[0], tuning_vector[1], tuning_vector[2]);
-            //play audio
-       }
-       //in 2nd:
-       println!("Triads -- second inversion:");
-       for root in 10..11 {
+            let just_notes = {
+                let mut out = vec![];
+                for i in 0..3 {
+                    out.push(equal_notes[i] as f64 + tuning_vector[i]);
+                }
+                out
+            };
+            if !within_epsilon_of(just_notes[2] - just_notes[0], ET_TO_JUST[8]) {
+                failures += format!("First inversion triad failed to tune perfectly: m6 was {}, but expected {}", 
+                just_notes[2] - just_notes[0], ET_TO_JUST[8]).as_str();
+            }
+            if !within_epsilon_of(just_notes[2] - just_notes[1], ET_TO_JUST[5]) {
+                failures += format!("First inversion triad failed to tune perfectly: p4 was {}, but expected {}", 
+                just_notes[1] - just_notes[0], ET_TO_JUST[4]).as_str();
+            }
+        }
+        //2nd inversion:
+        for root in 10..40 {
             let equal_notes = vec![root + 7, root + 12, root + 16];
             let tuning_vector = compute_tuning_vector_f64(&equal_notes).unwrap();
-            println!("equal_notes = [{}, {}, {}]", equal_notes[0], equal_notes[1], equal_notes[2]);
-            println!("tuning_vector = [{}, {}, {}]", tuning_vector[0], tuning_vector[1], tuning_vector[2]);
-            //play audio
-       }
+            let just_notes = {
+                let mut out = vec![];
+                for i in 0..3 {
+                    out.push(equal_notes[i] as f64 + tuning_vector[i]);
+                }
+                out
+            };
+            if !within_epsilon_of(just_notes[2] - just_notes[1], ET_TO_JUST[4]) {
+                failures += format!("First inversion triad failed to tune perfectly: M3 was {}, but expected {}", 
+                just_notes[2] - just_notes[1], ET_TO_JUST[4]).as_str();
+            }
+            if !within_epsilon_of(just_notes[1] - just_notes[0], ET_TO_JUST[5]) {
+                failures += format!("First inversion triad failed to tune perfectly: p4 was {}, but expected {}", 
+                just_notes[1] - just_notes[0], ET_TO_JUST[4]).as_str();
+            }
+        }
+
+        assert!(failures.is_empty(), "{failures}");
        
     }
 
-    //#[test]
-    fn stack_tests() {
+    #[test]
+    fn cluster_test() {
+        //stress test: ensure that dense tone clusters don't have
+        //too much drift from the original pitch centers.
+        //Mostly of theoretical interest: no performer cares if their tone clusters are in tune!
+
+        let DRIFT_TOLERANCE = 0.1; 
+        
+        //In practice, we find that drift tends to cap out around 7 cents.
+
+        //Interestingly, drift seems to cap out at 4-note clusters: why could this be?
+        //probably some cool linear algebra at play here :D
+
+        let mut failures = String::new();
+
+        //Whole step clusters
+        for root in 11..80 {
+            for cluster_size in 1..9 {
+                let equal_cluster = {
+                    let mut out = vec![];
+                    for i in 0..cluster_size {
+                        out.push(root + 2 * i);
+                    }
+                    out
+                };
+                let tuning_vector = compute_tuning_vector_f64(&equal_cluster).unwrap();
+                for i in 0..tuning_vector.len() {
+                    if f64::abs(tuning_vector[i]) >= DRIFT_TOLERANCE {
+                        failures += format!("Too much drift in whole step cluster! Drift = {}, with {} notes in cluster. \n", tuning_vector[i], cluster_size).as_str();
+                    }
+                }
+            }    
+        }
+
+        //Half step clusters
+        for root in 11..80 {
+            for cluster_size in 1..9 {
+                let equal_cluster = {
+                    let mut out = vec![];
+                    for i in 0..cluster_size {
+                        out.push(root + i);
+                    }
+                    out
+                };
+                let tuning_vector = compute_tuning_vector_f64(&equal_cluster).unwrap();
+                for i in 0..tuning_vector.len() {
+                    if f64::abs(tuning_vector[i]) >= DRIFT_TOLERANCE {
+                        failures += format!("Too much drift in half step cluster! Drift = {}, with {} notes in cluster. \n", tuning_vector[i], cluster_size).as_str();
+                    }
+                }
+            }    
+        }
+
+        assert!(failures.is_empty(), "{failures}");
+        
+        //Half step clusters
+
+    }
+
+    // ==== AUDITORY TESTS ====
+    fn stacked_perfect_interval_tests() {
         //p4 x5
         let max = 3;
         let mut equal_notes = vec![0i8];
@@ -284,7 +384,7 @@ mod tests {
     }
 
     //non-rigorous-- sanity check to see how the algorithm affects more complicated chords
-    #[test]
+
     fn extension_tests() {
         //dom7
         let equal_notes = vec![0i8, 4, 7, 10];
@@ -312,10 +412,8 @@ mod tests {
        //test on things like dominant 7th chords with 2 roots represented, to ensure it doesn't drag up the 7th too much.
        
     }
-    
-    
 }
 
 fn main() {
-
+    //SEPARATE OUT AUDIO TESTS FROM NUMERICAL TESTS
 }
