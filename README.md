@@ -21,7 +21,7 @@ It can be shown that `(A * x) mod 12` will map a vector `x` of pitches to a vect
 
 We now seek to pick a vector of pitches `tuned` that minimizes the least-squares expression:
  
-`||W((A * tuned) - just((A * equal) mod 12)||^2`,
+`||W((A * tuned) mod 12) - just((A * equal) mod 12)||^2`,
 
 Where `just` is the function that maps interval classes to their just-intonation counterparts, each measured in semitones.
 
