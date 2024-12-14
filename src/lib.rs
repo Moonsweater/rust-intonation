@@ -60,7 +60,7 @@ static IMPORTANCE_WEIGHTS_SQRTED: Lazy<[f64; 12]> = Lazy::new(|| {
     arr
 });
 
-fn compute_tuning_vector_f64(equal_notes: &Vec<u8>) -> Result<Vec<f64>, String> {
+pub fn compute_tuning_vector_f64(equal_notes: &Vec<u8>) -> Result<Vec<f64>, String> {
 
     //Presumes the notes vector is sorted.
 
@@ -97,10 +97,10 @@ fn compute_tuning_vector_f64(equal_notes: &Vec<u8>) -> Result<Vec<f64>, String> 
     
     let (
             just_intervals_weighted, //W * j
-            WA //W * A
+            wa //W * A
         ) = {
             let mut j_weighted= vec![];
-            let mut WA = DMatrix::zeros(m, n);
+            let mut wa = DMatrix::zeros(m, n);
             let mut start = 0;
             let mut end = 1;
             let mut i = 0;
@@ -108,8 +108,8 @@ fn compute_tuning_vector_f64(equal_notes: &Vec<u8>) -> Result<Vec<f64>, String> 
                 let interval = (equal_notes[end] - equal_notes[start]) as usize;
                 let current_weight = IMPORTANCE_WEIGHTS_SQRTED[interval % 12];
                 j_weighted.push(current_weight * ((interval - (interval % 12)) as f64 + ET_TO_JUST[interval % 12]));
-                WA[(i, start)] = -current_weight;
-                WA[(i, end)] = current_weight;
+                wa[(i, start)] = -current_weight;
+                wa[(i, end)] = current_weight;
                 end += 1;
                 i += 1;
                 if end == n {
@@ -122,13 +122,13 @@ fn compute_tuning_vector_f64(equal_notes: &Vec<u8>) -> Result<Vec<f64>, String> 
             }
             (
                 DVector::from_vec(j_weighted),
-                WA
+                wa
             )
         }; 
 
     //WA will be singular: SVD is a safe bet for the pseudoinverse.
 
-    let wa_svd = WA.svd(true, true);
+    let wa_svd = wa.svd(true, true);
     let svd_failed_msg = &String::from("Svd failed.");
     let u = wa_svd.u.ok_or(svd_failed_msg)?;
     let v_t = wa_svd.v_t.ok_or(svd_failed_msg)?;
@@ -304,7 +304,7 @@ mod tests {
             //too much drift from the original pitch centers.
             //Mostly of theoretical interest: no performer cares if their tone clusters are in tune!
 
-            let DRIFT_TOLERANCE = 0.1; 
+            let drift_tolerance = 0.1; 
 
             //In practice, we find that drift tends to cap out around 7 cents.
 
@@ -325,7 +325,7 @@ mod tests {
                     };
                     let tuning_vector = compute_tuning_vector_f64(&equal_cluster).unwrap();
                     for i in 0..tuning_vector.len() {
-                        if f64::abs(tuning_vector[i]) >= DRIFT_TOLERANCE {
+                        if f64::abs(tuning_vector[i]) >= drift_tolerance {
                             failures += format!("Too much drift in whole step cluster! Drift = {}, with {} notes in cluster. \n", tuning_vector[i], cluster_size).as_str();
                         }
                     }
@@ -344,7 +344,7 @@ mod tests {
                     };
                     let tuning_vector = compute_tuning_vector_f64(&equal_cluster).unwrap();
                     for i in 0..tuning_vector.len() {
-                        if f64::abs(tuning_vector[i]) >= DRIFT_TOLERANCE {
+                        if f64::abs(tuning_vector[i]) >= drift_tolerance {
                             failures += format!("Too much drift in half step cluster! Drift = {}, with {} notes in cluster. \n", tuning_vector[i], cluster_size).as_str();
                         }
                     }
@@ -454,7 +454,7 @@ mod tests {
                 for pitch in pitches {
                     waves.push(make_triangle_wave(pitch, duration));
                 }
-                let mut wave_out = make_chord(waves);
+                let wave_out = make_chord(waves);
                 export_wav_from_vec_of_samples(filepath, wave_out);
             }
 
@@ -463,7 +463,7 @@ mod tests {
                 //Not needed to test the algorithm itself:
                 //These were used early in testing to ensure the WAV production was accurate.
                 //#[test]
-                fn test_wav_construction() {
+                fn _test_wav_construction() {
                     let a4_triangle = make_triangle_wave(69.0, 2.0);
                     export_wav_from_vec_of_samples("./test_A4.WAV", a4_triangle);
                     //user must manually listen to see if it's any good:
@@ -471,7 +471,7 @@ mod tests {
                 }
 
                 //#[test]
-                fn test_et_chord_construction() {
+                fn _test_et_chord_construction() {
                     let duration = 2.0;
                     //cm7
                     let mut notes = vec![];
@@ -485,7 +485,7 @@ mod tests {
                 }
 
                 //#[test]
-                fn test_just_table() {
+                fn _test_just_table() {
                     //This might be too subtle for technical people / non-musicians to hear, though. :(
                     //using the table, not the automatic tuner
                     let duration = 2.0;
@@ -616,8 +616,4 @@ mod tests {
         }
     }
     
-}
-
-fn main() {
-
 }
