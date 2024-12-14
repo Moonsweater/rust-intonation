@@ -166,10 +166,6 @@ fn compute_tuning_vector_f64(equal_notes: &Vec<u8>) -> Result<Vec<f64>, String> 
 
 }
 
-//Note: Midly has a function to convert floats to pitchbends (which are 14-bit ints???)
-
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -388,9 +384,9 @@ mod tests {
             fn pitch_to_freq(note: f64) -> f64 {
                 return f64::powf(2.0, note / 12.0) * PITCH_FREQ_CONVERSION_CONSTANT;
             }
-            fn make_triangle_wave(note: f64, duration_seconds: f64) -> Vec<f64> {
+            fn make_triangle_wave(pitch: f64, duration_seconds: f64) -> Vec<f64> {
 
-                let freq = pitch_to_freq(note);
+                let freq = pitch_to_freq(pitch);
                 let total_samples = (duration_seconds * SAMPLE_RATE as f64) as usize;
                 let period_in_samples = (SAMPLE_RATE as f64 / freq) as usize;
                 let slope_in_samples = 4.0 / period_in_samples as f64;
@@ -423,33 +419,43 @@ mod tests {
                 wav_writer.finalize().unwrap();
             }
 
-            fn make_chord(notes: Vec<Vec<f64>>) -> Vec<f64> {
+            fn make_chord(waves: Vec<Vec<f64>>) -> Vec<f64> {
                 //adds all, then normalizes.
                 let mut max_len = 0;
-                for note in  &notes {
-                    if max_len < note.len() {
-                        max_len = note.len();
+                for wave in  &waves {
+                    if max_len < wave.len() {
+                        max_len = wave.len();
                     }
                 }
 
                 let mut out = Vec::with_capacity(max_len);
 
-                for note in &notes {
-                    for i in 0..note.len() {
+                for wave in &waves {
+                    for i in 0..wave.len() {
                         if i < out.len() {
-                            out[i] += note[i];
+                            out[i] += wave[i];
                         } else {
-                            out.push(note[i]);
+                            out.push(wave[i]);
                         }
                     }
                 }
 
-                let normalizer = notes.len() as f64;
+                let normalizer = waves.len() as f64;
 
                 for sample in &mut out {
                     *sample = *sample / normalizer;
                 }
                 out
+            }
+
+            pub fn export_wav_from_pitches(filepath: &str, pitches: Vec<f64>) {
+                let duration = 2.0;
+                let mut waves = vec![];
+                for pitch in pitches {
+                    waves.push(make_triangle_wave(pitch, duration));
+                }
+                let mut wave_out = make_chord(waves);
+                export_wav_from_vec_of_samples(filepath, wave_out);
             }
 
             mod wav_creation_tests {
@@ -505,57 +511,108 @@ mod tests {
                 }
             }
         }   
-        
+
+        fn export_wav_comparison(base_filename: &str, equal_notes: Vec<u8>, tuning_vector: Vec<f64>) {
+            //naming convention: base_filename should be a name describing the chord we're playing.
+            //It will append whether it's just or et, and the WAV file extension,
+            //And place them in the wavsamples file.
+            let mut just_pitches = vec![];
+            for i in 0..equal_notes.len() {
+                just_pitches.push(equal_notes[i] as f64 + tuning_vector[i]);
+            }
+            wavmaker::export_wav_from_pitches(
+                (String::from("./wavsamples/") + base_filename + "_just.WAV").as_str(),
+                just_pitches
+            );
+            let mut equal_notes_f64 = vec![];
+            for i in 0..equal_notes.len() {
+                equal_notes_f64.push(equal_notes[i] as f64);
+            }
+            wavmaker::export_wav_from_pitches(
+                (String::from("./wavsamples/") + base_filename + "_et.WAV").as_str(),
+                equal_notes_f64
+            );      
+        }
+
         #[test]
         fn stacked_perfect_interval_tests() {
-            //p4 x5
+
+            //stress test: this is a situation where we want it to sound mostly like ET.
+            //Result: it does!
+
+            let root = 60; //C4
+            //p4 x3, 4 notes
             let max = 3;
-            let mut equal_notes = vec![0];
+            let mut equal_notes = vec![root];
             for i in 0..max {
                 equal_notes.push(equal_notes[i] + 5);
             }
             let tuning_vector = compute_tuning_vector_f64(&equal_notes).unwrap();
-            println!("Stacked 4ths: notes: {:?}", equal_notes);
-            println!("tuning: {:?}", tuning_vector);
-    
-            //p5 x5
-            let mut equal_notes = vec![0];
+            export_wav_comparison("stacked_4ths", equal_notes, tuning_vector);
+            //p5 x3, 4 notes
+            let mut equal_notes = vec![root];
             for i in 0..max {
                 equal_notes.push(equal_notes[i] + 7);
             }
             let tuning_vector = compute_tuning_vector_f64(&equal_notes).unwrap();
-            println!("stacked 5ths: notes: {:?}", equal_notes);
-            println!("tuning: {:?}", tuning_vector);
+            export_wav_comparison("stacked_5ths", equal_notes, tuning_vector);   
         }
     
-        //non-rigorous-- sanity check to see how the algorithm affects more complicated chords
-    
+        #[test]
         fn extension_tests() {
+
+            let root = 60;
+
+            //musical test: here, we want to see
+            //the tuner affect the sonority positively.
+
+            //Result: we can definitely hear fewer beats!
+            //So, from a technical standpoint, this seems to accomplish its goal.
+            //But, there seems to be no clear aesthetic victor, which is disappointing.
+
             //dom7
-            let equal_notes = vec![0, 4, 7, 10];
+            let equal_notes = vec![root + 0, root + 4, root + 7, root + 10];
             let tuning_vector = compute_tuning_vector_f64(&equal_notes).unwrap();
-            println!("dominant 7: notes: {:?}", equal_notes);
-            println!("tuning: {:?}", tuning_vector);
-            //lowers the fifth by a ton: not ideal!
-    
+            export_wav_comparison("dom_7", equal_notes, tuning_vector);
             //m9
-            let equal_notes = vec![0, 7, 10, 14, 15];
+            let equal_notes = vec![root + 0, root + 7, root + 10, root + 14, root + 15];
             let tuning_vector = compute_tuning_vector_f64(&equal_notes).unwrap();
-            println!("minor 9: notes: {:?}", equal_notes);
-            println!("tuning: {:?}", tuning_vector);
-            //seems normal
+            export_wav_comparison("minor_9", equal_notes, tuning_vector);
     
             //M7#11
-            let equal_notes = vec![0, 7, 11, 16, 18];
+            //needs some tweaking: triangle waves + chords with lots of extensions = the root gets buries.
+            let equal_notes = vec![root + 0, root + 7, root + 11, root + 16, root + 18];
             let tuning_vector = compute_tuning_vector_f64(&equal_notes).unwrap();
-            println!("maj7#11: notes: {:?}", equal_notes);
-            println!("tuning: {:?}", tuning_vector);
-            //seems normal
+            export_wav_comparison("lydian", equal_notes, tuning_vector);
+    
         }
     
+        #[test]
         fn asymmetry_tests() {
+
            //test on things like dominant 7th chords with 2 roots represented, to ensure it doesn't drag up the 7th too much.
            
+           let root = 60;
+
+           //unbalanced minor 7
+           let equal_notes = vec![root, root + 10, root + 12, root + 15, root + 24];
+           let tuning_vector = compute_tuning_vector_f64(&equal_notes).unwrap();
+           export_wav_comparison("m7_unbalanced", equal_notes, tuning_vector);
+           //m7 sounds reasonable, m3 gets raised like it's supposed to. Excellent!
+
+           //unbalanced major triad, 2nd inversion
+           let equal_notes = vec![root - 5, root, root + 4, root + 7, root + 7 + 12];
+           let tuning_vector = compute_tuning_vector_f64(&equal_notes).unwrap();
+           export_wav_comparison("maj_triad_unbalanced_1", equal_notes, tuning_vector);
+           //Similar to the above: third still gets raised, and by a reasonable amount.
+           //No distortions or lopsidedness percievable.
+
+           //unbalanced major triad, 1st inversion
+           let equal_notes = vec![root - 8, root, root + 4, root + 7, root + 12 + 4];
+           let tuning_vector = compute_tuning_vector_f64(&equal_notes).unwrap();
+           export_wav_comparison("maj_triad_unbalanced_2", equal_notes, tuning_vector);
+           //Same story as the above.
+        
         }
     }
     
